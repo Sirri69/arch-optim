@@ -133,10 +133,23 @@ class GPT(nn.Module):
         self.lm_head_main = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         
         # adding more LM heads for intermediate outputs
-        self.ln_inter_1 = LayerNorm(config.n_embd, bias=config.bias)
-        self.lm_head_inter_1 = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        self.ln_inter_2 = LayerNorm(config.n_embd, bias=config.bias)
-        self.lm_head_inter_2 = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        # self.ln_inter_1 = LayerNorm(config.n_embd, bias=config.bias)
+        # self.lm_head_inter_1 = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        # self.ln_inter_2 = LayerNorm(config.n_embd, bias=config.bias)
+        # self.lm_head_inter_2 = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        
+        self.inter_1 = nn.ModuleList([
+            Block(config),
+            LayerNorm(config.n_embd, bias=config.bias),
+            nn.Linear(config.n_embd, config.n_embd, bias=False),
+        ])
+        
+        self.inter_2 = nn.ModuleList([
+            Block(config),
+            LayerNorm(config.n_embd, bias=config.bias),
+            nn.Linear(config.n_embd, config.n_embd, bias=False),
+        ])
+        
 
 
         # with weight tying when using torch.compile() some warnings get generated:
@@ -188,12 +201,10 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = block(x)
             if i == 8:
-                inter_out_ln_1 = self.ln_inter_1(x)
-                inter_out_1 = self.lm_head_inter_1(inter_out_ln_1)
+                inter_1_logits = self.inter_1(x)
                 
             if i == 10:
-                inter_out_ln_2 = self.ln_inter_2(x)
-                inter_out_2 = self.lm_head_inter_2(inter_out_ln_2)
+                inter_2_logits = self.inter_2(x)
         
         x = self.transformer.ln_f(x)
 
@@ -202,11 +213,8 @@ class GPT(nn.Module):
             logits = self.lm_head_main(x)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
             
-            logits_inter_1 = self.lm_head_inter_1(inter_out_ln_1)
-            loss_inter_1 = F.cross_entropy(logits_inter_1.view(-1, logits_inter_1.size(-1)), targets.view(-1), ignore_index=-1)
-            
-            logits_inter_2 = self.lm_head_inter_2(inter_out_ln_2)
-            loss_inter_2 = F.cross_entropy(logits_inter_2.view(-1, logits_inter_2.size(-1)), targets.view(-1), ignore_index=-1)
+            loss_inter_1 = F.cross_entropy(inter_1_logits.view(-1, inter_1_logits.size(-1)), targets.view(-1), ignore_index=-1)
+            loss_inter_2 = F.cross_entropy(inter_2_logits.view(-1, inter_2_logits.size(-1)), targets.view(-1), ignore_index=-1)
             
             loss = 0.8*loss + 0.05*loss_inter_1 + 0.15*loss_inter_2
         else:
