@@ -138,20 +138,10 @@ class GPT(nn.Module):
         # self.ln_inter_2 = LayerNorm(config.n_embd, bias=config.bias)
         # self.lm_head_inter_2 = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         
-        # self.inter_1 = nn.ModuleList([
-        #     Block(config),
-        #     LayerNorm(config.n_embd, bias=config.bias),
-        #     nn.Linear(config.n_embd, config.n_embd, bias=False),
-        # ])
         self.inter_1_block = Block(config)
         self.inter_1_ln = LayerNorm(config.n_embd, bias=config.bias)
         self.inter_1_linear = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        
-        # self.inter_2 = nn.ModuleList([
-        #     Block(config),
-        #     LayerNorm(config.n_embd, bias=config.bias),
-        #     nn.Linear(config.n_embd, config.n_embd, bias=False),
-        # ])
+
         self.inter_2_block = Block(config)
         self.inter_2_ln = LayerNorm(config.n_embd, bias=config.bias)
         self.inter_2_linear = nn.Linear(config.n_embd, config.vocab_size, bias=False)
@@ -205,12 +195,12 @@ class GPT(nn.Module):
         x = self.transformer.drop(tok_emb + pos_emb)
         for i, block in enumerate(self.transformer.h):
             x = block(x)
-            if i == 8:
+            if i == 7:
                 inter_1_output = self.inter_1_block(x)
                 inter_1_output = self.inter_1_ln(inter_1_output)
                 inter_1_output = self.inter_1_linear(inter_1_output)
                 
-            if i == 10:
+            if i == 9:
                 inter_2_output = self.inter_2_block(x)
                 inter_2_output = self.inter_2_ln(inter_2_output)
                 inter_2_output = self.inter_2_linear(inter_2_output)
@@ -226,8 +216,8 @@ class GPT(nn.Module):
             loss_inter_2 = F.cross_entropy(inter_2_output.view(-1, inter_2_output.size(-1)), targets.view(-1), ignore_index=-1)
             
             # print(f"loss: {loss}, loss_inter_1: {loss_inter_1}, loss_inter_2: {loss_inter_2}")
-            
-            loss = loss + loss_inter_1 * 0.05 + loss_inter_2 * 0.15
+            total_weight = 0.45 + 0.3 + 0.3
+            loss = (loss * 0.45 + loss_inter_1 * 0.3 + loss_inter_2 * 0.3) / total_weight
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head_main(x[:, [-1], :]) # note: using list [-1] to preserve the time dim

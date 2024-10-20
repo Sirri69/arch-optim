@@ -40,7 +40,7 @@ torch._dynamo.config.suppress_errors = True
 # default config values designed to train a gpt2 (124M) on OpenWebText
 # I/O
 out_dir = 'out'
-eval_interval = 2000
+eval_interval = 1000
 log_interval = 1
 eval_iters = 200
 eval_only = False # if True, script exits right after the first eval
@@ -52,7 +52,7 @@ wandb_project = 'arch-optim'
 wandb_run_name = 'gpt2'+str(time.time()) # 'run' + str(time.time())
 # data
 dataset = 'fineweb'
-gradient_accumulation_steps = 2 # used to simulate larger batch sizes
+gradient_accumulation_steps = 8 # used to simulate larger batch sizes
 batch_size = 8 # if gradient_accumulation_steps > 1, this is the micro-batch size
 block_size = 1024
 # model
@@ -365,7 +365,8 @@ while True:
         with ctx:
             logits, (loss, loss_inter_1, loss_inter_2) = model(X, Y)
             
-            loss = loss + loss_inter_1 * 0.05 + loss_inter_2 * 0.15
+            total_weight = 0.45 + 0.3 + 0.3
+            loss = (loss * 0.45 + loss_inter_1 * 0.3 + loss_inter_2 * 0.3) / total_weight
             
             loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
@@ -393,7 +394,7 @@ while True:
         if local_iter_num >= 5: # let the training loop settle a bit
             mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
             running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
-        print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
+        print(f"iter {iter_num}: loss {lossf:.6f}, loss_inter_1 {inter_losses['train']['inter_loss_1']:.6f}, loss_inter_2 {inter_losses['train']['inter_loss_2']:.6f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
     iter_num += 1
     local_iter_num += 1
 
