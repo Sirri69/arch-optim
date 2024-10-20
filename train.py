@@ -227,17 +227,20 @@ if ddp:
 @torch.no_grad()
 def estimate_loss():
     out = {}
+    inter_losses = {}
     model.eval()
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
         for k in range(eval_iters):
             X, Y = get_batch(split)
             with ctx:
-                logits, loss = model(X, Y)
+                logits, (loss, loss_inter_1, loss_inter_2) = model(X, Y)
             losses[k] = loss.item()
+            inter_losses[k] = (loss_inter_1.item(), loss_inter_2.item())
         out[split] = losses.mean()
+        inter_losses[split] = inter_losses.mean()
     model.train()
-    return out
+    return out, inter_losses
 
 # learning rate decay scheduler (cosine with warmup)
 def get_lr(it):
@@ -273,13 +276,17 @@ while True:
 
     # evaluate the loss on train/val sets and write checkpoints
     if iter_num % eval_interval == 0 and master_process:
-        losses = estimate_loss()
-        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        losses, inter_losses = estimate_loss()
+        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, inter_loss_1 {inter_losses['train']:.4f}, inter_loss_2 {inter_losses['val']:.4f}")
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
                 "train/loss": losses['train'],
                 "val/loss": losses['val'],
+                "train/inter_loss_1": inter_losses['train'][0],
+                "train/inter_loss_2": inter_losses['train'][1],
+                "val/inter_loss_1": inter_losses['val'][0],
+                "val/inter_loss_2": inter_losses['val'][1],
                 "lr": lr,
                 "mfu": running_mfu*100, # convert to percentage
             })
