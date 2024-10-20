@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "E:\Mercity\arch-optim\train.py", line 261, in <module>
+    X, Y = get_batch('train') # fetch the very first batch
+           ^^^^^^^^^^^^^^^^^^
+  File "E:\Mercity\arch-optim\train.py", line 131, in get_batch
+    data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ASUS\AppData\Local\Programs\Python\Python311\Lib\site-packages\numpy\core\memmap.py", line 229, in __new__
+    f_ctx = open(os_fspath(filename), ('r' if mode == 'c' else mode)+'b')
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '.\\fineweb\\train.bin'

@@ -16,7 +16,7 @@ $ torchrun --nproc_per_node=8 --nnodes=2 --node_rank=1 --master_addr=123.456.123
 (If your cluster does not have Infiniband interconnect prepend NCCL_IB_DISABLE=1)
 """
 
-import os
+import os, glob
 import time
 import math
 import pickle
@@ -124,7 +124,7 @@ ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=
 
 # poor man's data loader
 data_dir = os.path.join('.', dataset)
-def get_batch(split):
+def _get_batch(split):
     # We recreate np.memmap every batch to avoid a memory leak, as per
     # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
     if split == 'train':
@@ -141,6 +141,50 @@ def get_batch(split):
     else:
         x, y = x.to(device), y.to(device)
     return x, y
+
+def get_batch(split):
+    global train_data, val_data  # Use global variables to store the memory-mapped arrays
+
+    if not 'train_data' in globals():
+        # Initialize the data arrays if they haven't been created yet
+        train_files = sorted(glob.glob(os.path.join(data_dir, 'edu_fineweb10B/edufineweb_train_*.npy')))
+        val_files = sorted(glob.glob(os.path.join(data_dir, 'edu_fineweb10B/edufineweb_val_*.npy')))
+        
+        train_data = [np.memmap(f, dtype=np.uint16, mode='r') for f in train_files]
+        val_data = [np.memmap(f, dtype=np.uint16, mode='r') for f in val_files]
+
+    if split == 'train':
+        data = train_data
+    else:
+        data = val_data
+
+    # Calculate total length of all shards
+    total_length = sum(len(shard) for shard in data)
+
+    ix = torch.randint(total_length - block_size, (batch_size,))
+    x = []
+    y = []
+
+    for i in ix:
+        # Find which shard this index belongs to
+        for shard in data:
+            if i < len(shard):
+                break
+            i -= len(shard)
+        
+        x.append(torch.from_numpy((shard[i:i+block_size]).astype(np.int64)))
+        y.append(torch.from_numpy((shard[i+1:i+1+block_size]).astype(np.int64)))
+
+    x = torch.stack(x)
+    y = torch.stack(y)
+
+    if device_type == 'cuda':
+        # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
+        x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
+    else:
+        x, y = x.to(device), y.to(device)
+    return x, y
+
 
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
 iter_num = 0
