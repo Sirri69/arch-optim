@@ -145,7 +145,7 @@ class GPT(nn.Module):
         # ])
         self.inter_1_block = Block(config)
         self.inter_1_ln = LayerNorm(config.n_embd, bias=config.bias)
-        self.inter_1_linear = nn.Linear(config.n_embd, config.n_embd, bias=False)
+        self.inter_1_linear = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         
         # self.inter_2 = nn.ModuleList([
         #     Block(config),
@@ -154,7 +154,7 @@ class GPT(nn.Module):
         # ])
         self.inter_2_block = Block(config)
         self.inter_2_ln = LayerNorm(config.n_embd, bias=config.bias)
-        self.inter_2_linear = nn.Linear(config.n_embd, config.n_embd, bias=False)
+        self.inter_2_linear = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
 
         # with weight tying when using torch.compile() some warnings get generated:
@@ -225,7 +225,9 @@ class GPT(nn.Module):
             loss_inter_1 = F.cross_entropy(inter_1_output.view(-1, inter_1_output.size(-1)), targets.view(-1), ignore_index=-1)
             loss_inter_2 = F.cross_entropy(inter_2_output.view(-1, inter_2_output.size(-1)), targets.view(-1), ignore_index=-1)
             
-            loss = 0.8*loss + 0.05*loss_inter_1 + 0.15*loss_inter_2
+            # print(f"loss: {loss}, loss_inter_1: {loss_inter_1}, loss_inter_2: {loss_inter_2}")
+            
+            loss = loss + loss_inter_1 * 0.05 + loss_inter_2 * 0.15
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head_main(x[:, [-1], :]) # note: using list [-1] to preserve the time dim

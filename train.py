@@ -47,13 +47,13 @@ eval_only = False # if True, script exits right after the first eval
 always_save_checkpoint = True # if True, always save a checkpoint after each eval
 init_from = 'scratch' # 'scratch' or 'resume' or 'gpt2*'
 # wandb logging
-wandb_log = False # disabled by default
-wandb_project = 'owt'
-wandb_run_name = 'gpt2' # 'run' + str(time.time())
+wandb_log = True # disabled by default
+wandb_project = 'arch-optim'
+wandb_run_name = 'gpt2'+str(time.time()) # 'run' + str(time.time())
 # data
 dataset = 'fineweb'
-gradient_accumulation_steps = 5 * 8 # used to simulate larger batch sizes
-batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch size
+gradient_accumulation_steps = 2 # used to simulate larger batch sizes
+batch_size = 8 # if gradient_accumulation_steps > 1, this is the micro-batch size
 block_size = 1024
 # model
 n_layer = 12
@@ -145,7 +145,8 @@ def _get_batch(split):
 def get_batch(split):
     global train_data, val_data  # Use global variables to store the memory-mapped arrays
 
-    if not 'train_data' in globals():
+    if 'train_data' not in globals():
+        print("Initializing data arrays")
         # Initialize the data arrays if they haven't been created yet
         train_files = sorted(glob.glob(os.path.join(data_dir, 'edu_fineweb10B/edufineweb_train_*.npy')))
         val_files = sorted(glob.glob(os.path.join(data_dir, 'edu_fineweb10B/edufineweb_val_*.npy')))
@@ -153,27 +154,26 @@ def get_batch(split):
         train_data = [np.memmap(f, dtype=np.uint16, mode='r') for f in train_files]
         val_data = [np.memmap(f, dtype=np.uint16, mode='r') for f in val_files]
 
-    if split == 'train':
-        data = train_data
-    else:
-        data = val_data
+    data = train_data if split == 'train' else val_data
 
     # Calculate total length of all shards
     total_length = sum(len(shard) for shard in data)
 
-    ix = torch.randint(total_length - block_size, (batch_size,))
     x = []
     y = []
 
-    for i in ix:
+    while len(x) < batch_size:
+        ix = torch.randint(total_length - block_size, (1,)).item()
+        
         # Find which shard this index belongs to
         for shard in data:
-            if i < len(shard):
+            if ix < len(shard):
                 break
-            i -= len(shard)
+            ix -= len(shard)
         
-        x.append(torch.from_numpy((shard[i:i+block_size]).astype(np.int64)))
-        y.append(torch.from_numpy((shard[i+1:i+1+block_size]).astype(np.int64)))
+        if ix + block_size + 1 <= len(shard):
+            x.append(torch.from_numpy((shard[ix:ix+block_size]).astype(np.int64)))
+            y.append(torch.from_numpy((shard[ix+1:ix+1+block_size]).astype(np.int64)))
 
     x = torch.stack(x)
     y = torch.stack(y)
@@ -275,14 +275,17 @@ def estimate_loss():
     model.eval()
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
+        inter_1_losses_list = torch.zeros(eval_iters)
+        inter_2_losses_list = torch.zeros(eval_iters)
         for k in range(eval_iters):
             X, Y = get_batch(split)
             with ctx:
                 logits, (loss, loss_inter_1, loss_inter_2) = model(X, Y)
             losses[k] = loss.item()
-            inter_losses[k] = (loss_inter_1.item(), loss_inter_2.item())
+            inter_1_losses_list[k] = loss_inter_1.item()
+            inter_2_losses_list[k] = loss_inter_2.item()
         out[split] = losses.mean()
-        inter_losses[split] = inter_losses.mean()
+        inter_losses[split] = {"inter_loss_1": inter_1_losses_list.mean(), "inter_loss_2": inter_2_losses_list.mean()}
     model.train()
     return out, inter_losses
 
@@ -321,16 +324,16 @@ while True:
     # evaluate the loss on train/val sets and write checkpoints
     if iter_num % eval_interval == 0 and master_process:
         losses, inter_losses = estimate_loss()
-        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, inter_loss_1 {inter_losses['train']:.4f}, inter_loss_2 {inter_losses['val']:.4f}")
+        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}, inter_loss_1 {inter_losses['train']['inter_loss_1']:.4f}, inter_loss_2 {inter_losses['val']['inter_loss_2']:.4f}")
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
                 "train/loss": losses['train'],
                 "val/loss": losses['val'],
-                "train/inter_loss_1": inter_losses['train'][0],
-                "train/inter_loss_2": inter_losses['train'][1],
-                "val/inter_loss_1": inter_losses['val'][0],
-                "val/inter_loss_2": inter_losses['val'][1],
+                "train/inter_loss_1": inter_losses['train']['inter_loss_1'],
+                "train/inter_loss_2": inter_losses['train']['inter_loss_2'],
+                "val/inter_loss_1": inter_losses['val']['inter_loss_1'],
+                "val/inter_loss_2": inter_losses['val']['inter_loss_2'],
                 "lr": lr,
                 "mfu": running_mfu*100, # convert to percentage
             })
@@ -360,7 +363,10 @@ while True:
             # looking at the source of that context manager, it just toggles this variable
             model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
         with ctx:
-            logits, loss = model(X, Y)
+            logits, (loss, loss_inter_1, loss_inter_2) = model(X, Y)
+            
+            loss = loss + loss_inter_1 * 0.05 + loss_inter_2 * 0.15
+            
             loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
         X, Y = get_batch('train')
