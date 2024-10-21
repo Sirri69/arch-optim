@@ -386,8 +386,8 @@ while True:
         with ctx:
             logits, (loss, loss_inter_1, loss_inter_2) = model(X, Y)
             
-            total_weight = 0.7 + 0.2 + 0.1
-            loss = (loss * 0.7 + loss_inter_1 * 0.2 + loss_inter_2 * 0.1) / total_weight
+            # total_weight = 0.7 + 0.2 + 0.1
+            # loss = (loss * 0.7 + loss_inter_1 * 0.2 + loss_inter_2 * 0.1) / total_weight
             
             loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
         # immediately async prefetch next batch while model is doing the forward pass on the GPU
