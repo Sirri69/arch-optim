@@ -211,6 +211,27 @@ if init_from == 'scratch':
     model_args['vocab_size'] = meta_vocab_size if meta_vocab_size is not None else 50304
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
+    
+    # model.visualize_model()
+    from torchviz import make_dot
+    model.to(device)
+
+    # Generate a dummy input for visualization
+    dummy_input = torch.randint(0, model.config.vocab_size, (1, block_size)).to(device)
+
+    # Forward pass through the model to get the output
+    output, _ = model(dummy_input)
+    
+    for name, param in model.named_parameters():
+        print(name, param.requires_grad)
+        if "inter_" in name and not param.requires_grad:
+            print(f"Parameter {name} is frozen.")
+
+    # Create a visualization of the model
+    dot = make_dot(output, params=dict(model.named_parameters()))
+    dot.render("model_visualization", format="png")  # Save the visualization as a PNG file
+    # import sys
+    # sys.exit()
 elif init_from == 'resume':
     print(f"Resuming training from {out_dir}")
     # resume training from a checkpoint.
@@ -365,8 +386,8 @@ while True:
         with ctx:
             logits, (loss, loss_inter_1, loss_inter_2) = model(X, Y)
             
-            total_weight = 0.45 + 0.3 + 0.3
-            loss = (loss * 0.45 + loss_inter_1 * 0.3 + loss_inter_2 * 0.3) / total_weight
+            total_weight = 0.7 + 0.2 + 0.1
+            loss = (loss * 0.7 + loss_inter_1 * 0.2 + loss_inter_2 * 0.1) / total_weight
             
             loss = loss / gradient_accumulation_steps # scale the loss to account for gradient accumulation
         # immediately async prefetch next batch while model is doing the forward pass on the GPU

@@ -138,11 +138,23 @@ class GPT(nn.Module):
         # self.ln_inter_2 = LayerNorm(config.n_embd, bias=config.bias)
         # self.lm_head_inter_2 = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         
-        self.inter_1_block = Block(config)
+        # self.inter_1_block = Block(config)
+        # self.inter_1_ln = LayerNorm(config.n_embd, bias=config.bias)
+        # self.inter_1_linear = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+        # self.inter_2_block = Block(config)
+        # self.inter_2_ln = LayerNorm(config.n_embd, bias=config.bias)
+        # self.inter_2_linear = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+
+        num_aux_blocks = 3  # Adjust as needed
+        # Auxiliary path 1
+        self.inter_1_blocks = nn.ModuleList([Block(config) for _ in range(num_aux_blocks)])
         self.inter_1_ln = LayerNorm(config.n_embd, bias=config.bias)
         self.inter_1_linear = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
-        self.inter_2_block = Block(config)
+        # Auxiliary path 2
+        self.inter_2_blocks = nn.ModuleList([Block(config) for _ in range(num_aux_blocks)])
         self.inter_2_ln = LayerNorm(config.n_embd, bias=config.bias)
         self.inter_2_linear = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
@@ -185,6 +197,7 @@ class GPT(nn.Module):
 
     def forward(self, idx, targets=None):
         device = idx.device
+        print(idx.shape)
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
@@ -196,14 +209,32 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = block(x)
             if i == 7:
-                inter_1_output = self.inter_1_block(x)
-                inter_1_output = self.inter_1_ln(inter_1_output)
-                inter_1_output = self.inter_1_linear(inter_1_output)
+                print("WENT TO INTER 1")
+                # inter_1_output = self.inter_1_block(x)
+                # inter_1_output = self.inter_1_ln(inter_1_output)
+                # inter_1_output = self.inter_1_linear(inter_1_output)
+                
+                inter_x1 = x  # Start with the current x
+                # Pass through auxiliary blocks for inter_1
+                for aux_block in self.inter_1_blocks:
+                    inter_x1 = aux_block(inter_x1)
+                # Apply layer normalization and linear layer
+                inter_x1 = self.inter_1_ln(inter_x1)
+                inter_1_output = self.inter_1_linear(inter_x1)
                 
             if i == 9:
-                inter_2_output = self.inter_2_block(x)
-                inter_2_output = self.inter_2_ln(inter_2_output)
-                inter_2_output = self.inter_2_linear(inter_2_output)
+                print("WENT TO INTER 2")
+                # inter_2_output = self.inter_2_block(x)
+                # inter_2_output = self.inter_2_ln(inter_2_output)
+                # inter_2_output = self.inter_2_linear(inter_2_output)
+                
+                inter_x2 = x  # Start with the current x
+                # Pass through auxiliary blocks for inter_2
+                for aux_block in self.inter_2_blocks:
+                    inter_x2 = aux_block(inter_x2)
+                # Apply layer normalization and linear layer
+                inter_x2 = self.inter_2_ln(inter_x2)
+                inter_2_output = self.inter_2_linear(inter_x2)
         
         x = self.transformer.ln_f(x)
 
@@ -216,12 +247,14 @@ class GPT(nn.Module):
             loss_inter_2 = F.cross_entropy(inter_2_output.view(-1, inter_2_output.size(-1)), targets.view(-1), ignore_index=-1)
             
             # print(f"loss: {loss}, loss_inter_1: {loss_inter_1}, loss_inter_2: {loss_inter_2}")
-            total_weight = 0.45 + 0.3 + 0.3
-            loss = (loss * 0.45 + loss_inter_1 * 0.3 + loss_inter_2 * 0.3) / total_weight
+            total_weight = 0.7 + 0.2 + 0.1
+            loss = (loss * 0.7 + loss_inter_1 * 0.2 + loss_inter_2 * 0.1) / total_weight
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head_main(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
             loss = None
+            loss_inter_1 = None
+            loss_inter_2 = None
 
         return logits, (loss, loss_inter_1, loss_inter_2)
 
@@ -334,7 +367,7 @@ class GPT(nn.Module):
         flops_promised = 312e12 # A100 GPU bfloat16 peak flops is 312 TFLOPS
         mfu = flops_achieved / flops_promised
         return mfu
-
+    
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
         """
