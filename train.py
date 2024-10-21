@@ -40,14 +40,14 @@ torch._dynamo.config.suppress_errors = True
 # default config values designed to train a gpt2 (124M) on OpenWebText
 # I/O
 out_dir = 'out'
-eval_interval = 1000
+eval_interval = 200
 log_interval = 1
 eval_iters = 200
 eval_only = False # if True, script exits right after the first eval
 always_save_checkpoint = True # if True, always save a checkpoint after each eval
 init_from = 'scratch' # 'scratch' or 'resume' or 'gpt2*'
 # wandb logging
-wandb_log = True # disabled by default
+wandb_log = False # disabled by default
 wandb_project = 'arch-optim'
 wandb_run_name = 'gpt2'+str(time.time()) # 'run' + str(time.time())
 # data
@@ -211,27 +211,7 @@ if init_from == 'scratch':
     model_args['vocab_size'] = meta_vocab_size if meta_vocab_size is not None else 50304
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
-    
-    # model.visualize_model()
-    from torchviz import make_dot
-    model.to(device)
 
-    # Generate a dummy input for visualization
-    dummy_input = torch.randint(0, model.config.vocab_size, (1, block_size)).to(device)
-
-    # Forward pass through the model to get the output
-    output, _ = model(dummy_input)
-    
-    for name, param in model.named_parameters():
-        print(name, param.requires_grad)
-        if "inter_" in name and not param.requires_grad:
-            print(f"Parameter {name} is frozen.")
-
-    # Create a visualization of the model
-    dot = make_dot(output, params=dict(model.named_parameters()))
-    dot.render("model_visualization", format="png")  # Save the visualization as a PNG file
-    # import sys
-    # sys.exit()
 elif init_from == 'resume':
     print(f"Resuming training from {out_dir}")
     # resume training from a checkpoint.
@@ -385,6 +365,7 @@ while True:
             model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
         with ctx:
             logits, (loss, loss_inter_1, loss_inter_2) = model(X, Y)
+            # print(f"loss: {loss}, loss_inter_1: {loss_inter_1}, loss_inter_2: {loss_inter_2}")
             
             # total_weight = 0.7 + 0.2 + 0.1
             # loss = (loss * 0.7 + loss_inter_1 * 0.2 + loss_inter_2 * 0.1) / total_weight
@@ -412,10 +393,12 @@ while True:
         # get loss as float. note: this is a CPU-GPU sync point
         # scale up to undo the division above, approximating the true total loss (exact would have been a sum)
         lossf = loss.item() * gradient_accumulation_steps
+        inter_1_lossf = loss_inter_1.item() * gradient_accumulation_steps
+        inter_2_lossf = loss_inter_2.item() * gradient_accumulation_steps
         if local_iter_num >= 5: # let the training loop settle a bit
             mfu = raw_model.estimate_mfu(batch_size * gradient_accumulation_steps, dt)
             running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
-        print(f"iter {iter_num}: loss {lossf:.6f}, loss_inter_1 {inter_losses['train']['inter_loss_1']:.6f}, loss_inter_2 {inter_losses['train']['inter_loss_2']:.6f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
+        print(f"iter {iter_num}: loss {lossf:.8f}, loss_inter_1 {inter_1_lossf:.10f}, loss_inter_2 {inter_2_lossf:.10f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%")
     iter_num += 1
     local_iter_num += 1
 

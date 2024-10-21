@@ -147,7 +147,7 @@ class GPT(nn.Module):
         # self.inter_2_linear = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
 
-        num_aux_blocks = 3  # Adjust as needed
+        num_aux_blocks = 1  # Adjust as needed
         # Auxiliary path 1
         self.inter_1_blocks = nn.ModuleList([Block(config) for _ in range(num_aux_blocks)])
         self.inter_1_ln = LayerNorm(config.n_embd, bias=config.bias)
@@ -197,7 +197,6 @@ class GPT(nn.Module):
 
     def forward(self, idx, targets=None):
         device = idx.device
-        print(idx.shape)
         b, t = idx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
@@ -209,7 +208,7 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = block(x)
             if i == 7:
-                print("WENT TO INTER 1")
+                # print("WENT TO INTER 1")
                 # inter_1_output = self.inter_1_block(x)
                 # inter_1_output = self.inter_1_ln(inter_1_output)
                 # inter_1_output = self.inter_1_linear(inter_1_output)
@@ -223,7 +222,7 @@ class GPT(nn.Module):
                 inter_1_output = self.inter_1_linear(inter_x1)
                 
             if i == 9:
-                print("WENT TO INTER 2")
+                # print("WENT TO INTER 2")
                 # inter_2_output = self.inter_2_block(x)
                 # inter_2_output = self.inter_2_ln(inter_2_output)
                 # inter_2_output = self.inter_2_linear(inter_2_output)
@@ -248,6 +247,7 @@ class GPT(nn.Module):
             
             # print(f"loss: {loss}, loss_inter_1: {loss_inter_1}, loss_inter_2: {loss_inter_2}")
             total_weight = 0.7 + 0.2 + 0.1
+            # loss * 0.0 + 
             loss = (loss * 0.7 + loss_inter_1 * 0.2 + loss_inter_2 * 0.1) / total_weight
         else:
             # inference-time mini-optimization: only forward the lm_head on the very last position
@@ -256,7 +256,7 @@ class GPT(nn.Module):
             loss_inter_1 = None
             loss_inter_2 = None
 
-        return logits, (loss, loss_inter_1, loss_inter_2)
+        return logits, (loss, loss_inter_1 * 0.2, loss_inter_2 * 0.1)
 
     def crop_block_size(self, block_size):
         # model surgery to decrease the block size if necessary
@@ -335,9 +335,17 @@ class GPT(nn.Module):
         # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
         decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
         nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        
+        aux_params = [p for n, p in param_dict.items() if 'inter_' in n]
+        main_params = [p for n, p in param_dict.items() if 'inter_' not in n]
+        
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2 and 'inter_' not in n]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2 and 'inter_' not in n]
+        
         optim_groups = [
             {'params': decay_params, 'weight_decay': weight_decay},
-            {'params': nodecay_params, 'weight_decay': 0.0}
+            {'params': nodecay_params, 'weight_decay': 0.0},
+            {'params': aux_params, 'weight_decay': weight_decay, 'lr': learning_rate * 0.8}  # Decrease LR for aux layers
         ]
         num_decay_params = sum(p.numel() for p in decay_params)
         num_nodecay_params = sum(p.numel() for p in nodecay_params)
