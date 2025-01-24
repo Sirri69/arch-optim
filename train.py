@@ -47,7 +47,7 @@ eval_only = False # if True, script exits right after the first eval
 always_save_checkpoint = True # if True, always save a checkpoint after each eval
 init_from = 'scratch' # 'scratch' or 'resume' or 'gpt2*'
 # wandb logging
-wandb_log = False # disabled by default
+wandb_log = True # disabled by default
 wandb_project = 'arch-optim'
 wandb_run_name = 'gpt2'+str(time.time()) # 'run' + str(time.time())
 # data
@@ -250,7 +250,7 @@ if block_size < model.config.block_size:
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
-scaler = torch.amp.GradScaler(enabled=(dtype == 'float16'))
+scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
 
 # optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
@@ -365,7 +365,7 @@ while True:
             model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
         with ctx:
             logits, (loss, loss_inter_1, loss_inter_2) = model(X, Y)
-            # print(f"loss: {loss}, loss_inter_1: {loss_inter_1}, loss_inter_2: {loss_inter_2}")
+            print(f"loss: {loss}, loss_inter_1: {loss_inter_1}, loss_inter_2: {loss_inter_2}")
             
             # total_weight = 0.7 + 0.2 + 0.1
             # loss = (loss * 0.7 + loss_inter_1 * 0.2 + loss_inter_2 * 0.1) / total_weight
